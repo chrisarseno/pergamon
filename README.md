@@ -23,24 +23,22 @@ jobs:
 
 ## What the comment looks like
 
-On a private 2,800-file Python monorepo, a one-line signature change to a shared logging helper produced:
+From the [demo repository](https://github.com/chrisarseno/pergamon-demo/pulls), a pull request that adds a timeout to the shared `query()` database helper:
 
-> 🔴 **High impact.** This pull request changes **1 file**. Within 2 hops of the changed code, **136 other files** depend on it, including **81 HTTP routes** and **0 test files**.
+> 🟡 **Medium impact.** This pull request changes **1 file**. Within 2 hops of the changed code, **4 other files** depend on it, including **5 HTTP routes** and **2 test files**.
 >
 > | Method | Route | Handler | File |
 > |---|---|---|---|
-> | GET | `/health` | `health` | `src/app/api/main.py` |
-> | POST | `/api/v1/tasks` | `create_task` | `src/app/api/main.py` |
+> | GET | `/users` | `users_index` | `app/api/main.py` |
+> | GET | `/me/orders` | `my_orders` | `app/api/main.py` |
+> | POST | `/orders` | `orders_create` | `app/api/main.py` |
 > | … | | | |
->
-> | Area | Dependent files |
-> |---|---|
-> | `src/app/performance/` | 32 |
-> | `src/app/workers/` | 27 |
+
+Routes count only when their handler function itself reaches the changed code, or when the handler's own lines were edited. `POST /orders` is listed because it calls `place_order`, which calls `get_user`, which calls `query()`. `GET /health` lives in the same file but never touches the database, so it goes in a collapsed "other routes in dependent files" list instead.
 
 The comment is sticky: Pergamon edits the same comment on each push instead of adding a new one. The full review also appears in the job summary.
 
-Measured on a 2-vCPU machine: indexing and analysis took 47 seconds for that 2,800-file repository. Small repositories finish in a few seconds.
+Speed: on a private 2,800-file Python monorepo, indexing plus analysis took 47 seconds on a 2-vCPU machine. Small repositories finish in seconds.
 
 ## Why
 
@@ -59,7 +57,7 @@ Code review shows you the diff. It doesn't show you the 136 files that import th
 | `high-threshold` | `50` | Dependent files for High impact |
 | `engine-version` | `v0.11.0` | codebase-memory-mcp release |
 
-Impact is also rated Medium when any HTTP route is affected, and High at 10 or more routes.
+Impact is also rated Medium when any route is affected, and High at 10 or more affected routes.
 
 ## Outputs
 

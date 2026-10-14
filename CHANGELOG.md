@@ -11,3 +11,4 @@ First release of Pergamon as a pull-request impact review built on unmodified co
 - Falls back to the job summary when the token can't comment (fork pull requests).
 
 The earlier Pergamon fork of codebase-memory-mcp (Aug 2026) is archived at `chrisarseno/pergamon-fork-2026`; upstream has since shipped its own memory fix and the CBM Lens interface.
+- Routes are matched at the handler level: a route counts when its handler reaches the changed code or its own lines changed. Routes that only share a file are listed separately.

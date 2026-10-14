@@ -6,10 +6,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "scripts"))
 import pergamon_review as pr  # noqa: E402
 
 
-def dc(changed, impacted, truncated=False):
-    return {"changed_files": changed, "impacted_total": len(impacted), "truncated": truncated,
-            "merge_base": "742816c26d4d263296ce5432378d0ea8cead8dfd",
-            "impacted": [{"qn": f, "label": "Module", "file": f, "hop": 1} for f in impacted]}
+def dc(changed, impacted, truncated=False, functions=()):
+    items = [{"qn": f, "label": "Module", "file": f, "hop": 1} for f in impacted]
+    items += [{"qn": qn, "label": "Function", "file": f, "hop": 2} for qn, f in functions]
+    return {"changed_files": changed, "impacted_total": len(items), "truncated": truncated,
+            "merge_base": "742816c26d4d263296ce5432378d0ea8cead8dfd", "impacted": items}
 
 
 class TestPaths(unittest.TestCase):
@@ -42,22 +43,43 @@ class TestAreas(unittest.TestCase):
 
 
 class TestAnalyse(unittest.TestCase):
-    routes = [{"path": "/health", "qn": "__route__GET__/health", "handler": "health", "file": "api/app.py"},
-              {"path": "/other", "qn": "__route__GET__/other", "handler": "o", "file": "api/other.py"}]
+    routes = [
+        {"path": "/health", "qn": "__route__GET__/health", "handler": "health",
+         "handler_qn": "p.api.app.health", "file": "api/app.py", "start_line": "10", "end_line": "12"},
+        {"path": "/users", "qn": "__route__GET__/users", "handler": "users",
+         "handler_qn": "p.api.app.users", "file": "api/app.py", "start_line": "15", "end_line": "18"},
+        {"path": "/other", "qn": "__route__GET__/other", "handler": "o",
+         "handler_qn": "p.api.other.o", "file": "api/other.py", "start_line": "1", "end_line": "3"},
+    ]
+
+    def paths(self, rs):
+        return [r["path"] for r in rs]
 
     def test_low_impact(self):
         a = pr.analyse(dc(["lib/a.py"], ["lib/b.py"]), self.routes, 2, 10, 50)
         self.assertEqual(a["risk"], "Low")
         self.assertEqual(a["routes"], [])
 
-    def test_routes_raise_risk_and_only_touched_files_count(self):
-        a = pr.analyse(dc(["lib/a.py"], ["api/app.py"]), self.routes, 2, 10, 50)
+    def test_only_handlers_that_depend_on_change_are_affected(self):
+        a = pr.analyse(dc(["lib/a.py"], ["api/app.py"], functions=[("p.api.app.users", "api/app.py")]),
+                       self.routes, 2, 10, 50)
         self.assertEqual(a["risk"], "Medium")
-        self.assertEqual([r["path"] for r in a["routes"]], ["/health"])
+        self.assertEqual(self.paths(a["routes"]), ["/users"])
+        self.assertEqual(self.paths(a["nearby_routes"]), ["/health"])
 
-    def test_route_in_changed_file_counts(self):
+    def test_edited_handler_is_affected_but_neighbours_are_not(self):
+        a = pr.analyse(dc(["api/app.py"], []), self.routes, 2, 10, 50, {"api/app.py": [(11, 11)]})
+        self.assertEqual(self.paths(a["routes"]), ["/health"])
+        self.assertEqual(self.paths(a["nearby_routes"]), ["/users"])
+
+    def test_changed_file_without_line_info_is_conservative(self):
         a = pr.analyse(dc(["api/other.py"], []), self.routes, 2, 10, 50)
-        self.assertEqual([r["path"] for r in a["routes"]], ["/other"])
+        self.assertEqual(self.paths(a["routes"]), ["/other"])
+
+    def test_overlaps(self):
+        self.assertTrue(pr.overlaps([(5, 9)], "9", "12"))
+        self.assertFalse(pr.overlaps([(5, 8)], "9", "12"))
+        self.assertTrue(pr.overlaps([(5, 8)], None, None))
 
     def test_high_impact_and_tests_split_out(self):
         imp = [f"svc/m{i}.py" for i in range(60)] + ["tests/test_a.py"]
@@ -99,6 +121,31 @@ class TestRender(unittest.TestCase):
     def test_truncation_note(self):
         md = self.render(pr.analyse(dc(["a.py"], [], truncated=True), [], 2, 10, 50))
         self.assertIn("lower bound", md)
+
+
+class TestChangedLines(unittest.TestCase):
+    def test_parses_head_side_ranges(self):
+        import subprocess, tempfile
+        with tempfile.TemporaryDirectory() as d:
+            run = lambda *a: subprocess.run(a, cwd=d, check=True, capture_output=True, text=True)
+            run("git", "init", "-q", "-b", "main")
+            with open(os.path.join(d, "a.py"), "w") as fh:
+                fh.write("".join(f"line{i}\n" for i in range(1, 11)))
+            run("git", "add", "-A")
+            run("git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "base")
+            base = run("git", "rev-parse", "HEAD").stdout.strip()
+            lines = open(os.path.join(d, "a.py")).read().splitlines()
+            lines[2] = "changed3"
+            lines.insert(7, "new")
+            with open(os.path.join(d, "a.py"), "w") as fh:
+                fh.write("\n".join(lines) + "\n")
+            cwd = os.getcwd()
+            try:
+                os.chdir(d)
+                ranges = pr.changed_lines(base)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual(ranges, {"a.py": [(3, 3), (8, 8)]})
 
 
 if __name__ == "__main__":

@@ -59,11 +59,43 @@ def detect_changes(binary: str, project: str, base: str, depth: int) -> dict:
 
 def all_routes(binary: str, project: str) -> list[dict]:
     q = ("MATCH (f)-[:HANDLES]->(r:Route) "
-         "RETURN r.name AS path, r.qualified_name AS qn, f.name AS handler, f.file_path AS file")
+         "RETURN r.name AS path, r.qualified_name AS qn, f.name AS handler, "
+         "f.qualified_name AS handler_qn, f.file_path AS file, "
+         "f.start_line AS start_line, f.end_line AS end_line")
     res = cbm(binary, "query_graph", "--project", project, "--query", q,
               "--max-rows", "5000", "--max-output-tokens", "400000")
     cols = res.get("columns", [])
     return [dict(zip(cols, row)) for row in res.get("rows", [])]
+
+
+def changed_lines(merge_base: str) -> dict[str, list[tuple[int, int]]]:
+    """Line ranges touched on the head side of `git diff merge_base`."""
+    if not merge_base:
+        return {}
+    proc = subprocess.run(["git", "diff", "-U0", "--no-color", merge_base, "--"],
+                          capture_output=True, text=True)
+    ranges: dict[str, list[tuple[int, int]]] = {}
+    current = None
+    for line in proc.stdout.splitlines():
+        if line.startswith("+++ "):
+            path = line[4:]
+            current = path[2:] if path.startswith("b/") else None
+        elif line.startswith("@@") and current:
+            # @@ -a,b +c,d @@  -> head-side lines c .. c+d-1 (d=0: pure deletion at c)
+            new = line.split("+", 1)[1].split(" ", 1)[0]
+            start, _, count = new.partition(",")
+            n = int(count) if count else 1
+            s = int(start)
+            ranges.setdefault(current, []).append((s, s + max(n, 1) - 1))
+    return ranges
+
+
+def overlaps(ranges: list[tuple[int, int]], start, end) -> bool:
+    try:
+        s, e = int(start), int(end)
+    except (TypeError, ValueError):
+        return True  # no line info: be conservative
+    return any(a <= e and b >= s for a, b in ranges)
 
 
 # ── analysis ────────────────────────────────────────────────────────────────
@@ -117,19 +149,34 @@ def risk(total: int, routes: int, low: int, high: int) -> tuple[str, str]:
     return "Low", "🟢"
 
 
-def analyse(dc: dict, routes: list[dict], area_levels: int, low: int, high: int) -> dict:
+def analyse(dc: dict, routes: list[dict], area_levels: int, low: int, high: int,
+            diff_ranges: dict[str, list[tuple[int, int]]] | None = None) -> dict:
     changed = list(dict.fromkeys(dc.get("changed_files") or []))
     impacted = dc.get("impacted") or []
     impacted_files = list(dict.fromkeys(i["file"] for i in impacted if i.get("file")))
-    touched = set(changed) | set(impacted_files)
-    hit_routes = [r for r in routes if r.get("file") in touched]
+    impacted_qns = {i["qn"] for i in impacted if i.get("qn")}
+    changed_set, impacted_set = set(changed), set(impacted_files)
+    # A route is "affected" when its handler was edited or the handler itself
+    # depends on the change. Routes that only share a file with dependent or
+    # changed code are listed separately as lower-confidence.
+    diff_ranges = diff_ranges or {}
+    hit_routes, nearby_routes = [], []
+    for r in routes:
+        f = r.get("file")
+        edited = f in changed_set and (f not in diff_ranges or
+                                       overlaps(diff_ranges[f], r.get("start_line"), r.get("end_line")))
+        if edited or r.get("handler_qn") in impacted_qns:
+            hit_routes.append(r)
+        elif f in impacted_set or f in changed_set:
+            nearby_routes.append(r)
     tests = sorted(f for f in impacted_files if is_test_path(f))
     product = [f for f in impacted_files if not is_test_path(f) and f not in changed]
     areas = group_areas(product, area_levels)
     level, icon = risk(len(product), len(hit_routes), low, high)
     return {
         "changed": changed, "impacted": impacted, "impacted_files": impacted_files,
-        "product_files": product, "tests": tests, "routes": hit_routes, "areas": areas,
+        "product_files": product, "tests": tests, "routes": hit_routes,
+        "nearby_routes": nearby_routes, "areas": areas,
         "risk": level, "icon": icon, "total": dc.get("impacted_total", len(impacted)),
         "truncated": bool(dc.get("truncated")), "merge_base": dc.get("merge_base", ""),
     }
@@ -171,6 +218,18 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
         if n_routes > max_rows:
             L.append(f"\n…and {n_routes - max_rows} more.")
         L.append("")
+
+    nearby = a.get("nearby_routes") or []
+    if nearby:
+        L += [f"<details><summary><b>Other routes in dependent files ({len(nearby)})</b>: "
+              "the file depends on the change, but the handler wasn't traced to it</summary>", "",
+              "| Method | Route | Handler | File |", "|---|---|---|---|"]
+        for r in nearby[:max_rows]:
+            L.append(f"| {route_method(r.get('qn', ''))} | `{md_escape(r.get('path', ''))}` | "
+                     f"`{md_escape(r.get('handler', ''))}` | {file_link(r.get('file', ''), server, repo, sha)} |")
+        if len(nearby) > max_rows:
+            L.append(f"\n…and {len(nearby) - max_rows} more.")
+        L += ["", "</details>", ""]
 
     if a["areas"]:
         L += ["### Most affected areas", "", "| Area | Dependent files |", "|---|---|"]
@@ -254,6 +313,8 @@ def main() -> int:
     args = p.parse_args()
 
     repo_path = os.path.abspath(args.repo_path)
+    if os.path.exists(args.output):
+        os.remove(args.output)  # never leave a stale review behind on failure
     name = "pergamon-review"
     print(f"Pergamon: indexing {repo_path} (mode={args.mode})", flush=True)
     idx = index_repo(args.binary, repo_path, name, args.mode)
@@ -262,7 +323,8 @@ def main() -> int:
     os.chdir(repo_path)  # detect_changes reads git state from the working directory
     dc = detect_changes(args.binary, name, args.base, args.depth)
     routes = all_routes(args.binary, name)
-    a = analyse(dc, routes, args.area_levels, args.medium_threshold, args.high_threshold)
+    a = analyse(dc, routes, args.area_levels, args.medium_threshold, args.high_threshold,
+                changed_lines(dc.get("merge_base", "")))
 
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
     gh_repo = os.environ.get("GITHUB_REPOSITORY", "")
