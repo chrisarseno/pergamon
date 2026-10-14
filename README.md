@@ -38,7 +38,7 @@ Routes count only when their handler function itself reaches the changed code, o
 
 The comment is sticky: Pergamon edits the same comment on each push instead of adding a new one. The full review also appears in the job summary.
 
-Speed: on a private 2,800-file Python monorepo, indexing plus analysis took 47 seconds on a 2-vCPU machine. Small repositories finish in seconds.
+Speed: on a private 2,800-file Python monorepo, full-mode indexing plus analysis takes about a minute on a 2-vCPU machine (about 35 seconds in `fast` mode, which skips some folders). Small repositories finish in seconds; this repository's own review runs in about 30 seconds end to end on `ubuntu-latest`.
 
 ## Why
 
@@ -49,7 +49,7 @@ Code review shows you the diff. It doesn't show you the 136 files that import th
 | Input | Default | Meaning |
 |---|---|---|
 | `depth` | `2` | Hops of callers, importers and users to follow from the changed code |
-| `mode` | `fast` | Indexing mode: `fast`, `moderate` or `full` (adds semantic edges; slower) |
+| `mode` | `full` | Indexing mode. `full` indexes every source file. `fast` and `moderate` are quicker but skip folders such as `scripts/`, `tools/`, `bin/`, `migrations/`, `e2e/`, `integration/`, `examples/` and `docs/` |
 | `comment` | `true` | Post the sticky comment. Set `false` to only write the job summary |
 | `base-ref` | PR base | Branch to compare against |
 | `max-rows` | `25` | Rows per table or list |
