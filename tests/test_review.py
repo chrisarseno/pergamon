@@ -122,6 +122,12 @@ class TestRender(unittest.TestCase):
         a = pr.analyse(dc(["a/x.py"], [], functions=[("p.a.x.f", "a/x.py"), ("p.a.x.g", "a/x.py")]), [], 2, 10, 50)
         self.assertIn("**2 functions** and **0 other files** depend", self.render(a))
 
+    def test_excluded_folders_are_named(self):
+        excl = pr.notable_excludes({"excluded": {"dirs": [".git", "scripts", "tests/__pycache__"]}})
+        self.assertEqual(excl, ["scripts"])
+        md = self.render(pr.analyse(dc(["a.py"], []), [], 2, 10, 50), excluded=excl)
+        self.assertIn("Not indexed: `scripts/`", md)
+
     def test_no_changes_message(self):
         md = self.render(pr.analyse(dc([], []), [], 2, 10, 50))
         self.assertIn("No indexed source files changed", md)

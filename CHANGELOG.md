@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.1.1 — 2026-10-14
+
+- The comment names any folders the engine excluded, so coverage is always visible.
+
 ## v0.1.0 — 2026-10-14
 
 First release of Pergamon as a pull-request impact review built on unmodified codebase-memory-mcp v0.11.0.
@@ -12,5 +16,5 @@ First release of Pergamon as a pull-request impact review built on unmodified co
 
 The earlier Pergamon fork of codebase-memory-mcp (Aug 2026) is archived at `chrisarseno/pergamon-fork-2026`; upstream has since shipped its own memory fix and the CBM Lens interface.
 - Routes are matched at the handler level: a route counts when its handler reaches the changed code or its own lines changed. Routes that only share a file are listed separately.
-- Default indexing mode is `full`. `fast` and `moderate` silently skip folders such as `scripts/`, `migrations/` and `integration/`, which a review must not miss.
+- Default indexing mode is `full`. `fast` and `moderate` skip folders such as `scripts/`, `migrations/` and `integration/`, which a review must not miss.
 - Summary counts dependent functions; code spans use double backticks when names contain a backtick.

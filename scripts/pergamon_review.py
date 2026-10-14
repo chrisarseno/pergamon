@@ -202,8 +202,17 @@ def file_link(path: str, server: str, repo: str, sha: str) -> str:
     return f"{code(path)}"
 
 
+IGNORED_EXCLUDES = {".git", "node_modules", "__pycache__", ".venv", "venv"}
+
+
+def notable_excludes(index_result: dict) -> list[str]:
+    """Folders the engine chose not to index, minus the obvious noise."""
+    dirs = ((index_result or {}).get("excluded") or {}).get("dirs") or []
+    return [d for d in dirs if PurePosixPath(d).name not in IGNORED_EXCLUDES]
+
+
 def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, sha: str,
-           max_rows: int) -> str:
+           max_rows: int, excluded: list[str] | None = None) -> str:
     L = [MARKER, "## Pergamon impact review", ""]
     n_prod, n_tests, n_routes = len(a["product_files"]), len(a["tests"]), len(a["routes"])
     L.append(f"{a['icon']} **{a['risk']} impact.** This pull request changes "
@@ -266,6 +275,10 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
 
     if a["truncated"]:
         L += ["> The engine truncated this result. Counts above are a lower bound.", ""]
+    if excluded:
+        shown = ", ".join(code(d + "/") for d in excluded[:10])
+        more = f" and {len(excluded) - 10} more" if len(excluded) > 10 else ""
+        L += [f"> Not indexed: {shown}{more}. Dependencies inside these folders aren't counted.", ""]
     L += ["---",
           f"<sub>Static analysis by [Pergamon](https://github.com/chrisarseno/pergamon) on "
           f"[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) {engine_version}. "
@@ -339,7 +352,7 @@ def main() -> int:
     gh_repo = os.environ.get("GITHUB_REPOSITORY", "")
     sha = os.environ.get("PERGAMON_HEAD_SHA") or os.environ.get("GITHUB_SHA", "")
     body = render(a, depth=args.depth, engine_version=args.engine_version, server=server,
-                  repo=gh_repo, sha=sha, max_rows=args.max_rows)
+                  repo=gh_repo, sha=sha, max_rows=args.max_rows, excluded=notable_excludes(idx))
 
     with open(args.output, "w", encoding="utf-8") as fh:
         fh.write(body)
