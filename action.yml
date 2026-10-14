@@ -18,8 +18,11 @@ inputs:
     description: How many hops of callers, importers and users to follow from the changed code.
     default: "2"
   mode:
-    description: Indexing mode passed to codebase-memory-mcp (fast, moderate or full).
-    default: fast
+    description: >-
+      Indexing mode passed to codebase-memory-mcp. "full" (default) indexes every source file.
+      "fast" and "moderate" are quicker but skip folders such as scripts/, tools/, bin/,
+      migrations/, e2e/, integration/, examples/ and docs/.
+    default: full
   comment:
     description: Post or update a sticky comment on the pull request ("true" or "false").
     default: "true"

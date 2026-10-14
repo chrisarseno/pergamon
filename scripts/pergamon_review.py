@@ -310,7 +310,7 @@ def main() -> int:
     p.add_argument("--repo-path", default=".")
     p.add_argument("--base", required=True, help="Base ref, e.g. origin/main")
     p.add_argument("--depth", type=int, default=2)
-    p.add_argument("--mode", default="fast", choices=["fast", "moderate", "full"])
+    p.add_argument("--mode", default="full", choices=["fast", "moderate", "full"])
     p.add_argument("--engine-version", default="")
     p.add_argument("--max-rows", type=int, default=25)
     p.add_argument("--area-levels", type=int, default=2)
