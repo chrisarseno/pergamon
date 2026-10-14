@@ -114,6 +114,9 @@ class TestRender(unittest.TestCase):
         self.assertIn("…and 3 more.", md)
         self.assertIn("/r0\\|x", md)
 
+    def test_backticks_escaped(self):
+        self.assertEqual(pr.md_escape("a`b|c"), "a\\`b\\|c")
+
     def test_no_changes_message(self):
         md = self.render(pr.analyse(dc([], []), [], 2, 10, 50))
         self.assertIn("No indexed source files changed", md)

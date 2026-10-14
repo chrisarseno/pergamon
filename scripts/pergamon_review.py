@@ -185,7 +185,8 @@ def analyse(dc: dict, routes: list[dict], area_levels: int, low: int, high: int,
 # ── rendering ───────────────────────────────────────────────────────────────
 
 def md_escape(s: str) -> str:
-    return str(s).replace("|", "\\|")
+    """Escape characters that break Markdown table cells or inline code."""
+    return str(s).replace("|", "\\|").replace("`", "\\`")
 
 
 def file_link(path: str, server: str, repo: str, sha: str) -> str:
