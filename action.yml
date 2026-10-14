@@ -1,0 +1,125 @@
+name: Pergamon impact review
+description: >-
+  Comments on every pull request with the code, HTTP routes and tests that depend on what
+  changed. Static analysis by codebase-memory-mcp; runs entirely on your runner.
+author: Chris Arsenault
+branding:
+  icon: book-open
+  color: green
+
+inputs:
+  github-token:
+    description: Token used to post the pull request comment.
+    default: ${{ github.token }}
+  base-ref:
+    description: Branch to compare against. Defaults to the pull request's base branch.
+    default: ""
+  depth:
+    description: How many hops of callers, importers and users to follow from the changed code.
+    default: "2"
+  mode:
+    description: Indexing mode passed to codebase-memory-mcp (fast, moderate or full).
+    default: fast
+  comment:
+    description: Post or update a sticky comment on the pull request ("true" or "false").
+    default: "true"
+  max-rows:
+    description: Maximum rows shown per table or list in the comment.
+    default: "25"
+  medium-threshold:
+    description: Dependent-file count at which impact is rated Medium.
+    default: "10"
+  high-threshold:
+    description: Dependent-file count at which impact is rated High.
+    default: "50"
+  engine-version:
+    description: codebase-memory-mcp release to use.
+    default: v0.11.0
+
+outputs:
+  risk:
+    description: low, medium or high.
+    value: ${{ steps.review.outputs.risk }}
+  impacted-files:
+    description: Number of other files that depend on the changed code.
+    value: ${{ steps.review.outputs.impacted-files }}
+  routes:
+    description: Number of HTTP routes in changed or dependent files.
+    value: ${{ steps.review.outputs.routes }}
+  tests:
+    description: Number of test files that depend on the changed code.
+    value: ${{ steps.review.outputs.tests }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check runner
+      shell: bash
+      run: |
+        if [ "$RUNNER_OS" != "Linux" ]; then
+          echo "::error::Pergamon currently supports Linux runners only (got $RUNNER_OS)."
+          exit 1
+        fi
+
+    - name: Fetch base branch
+      id: base
+      shell: bash
+      env:
+        INPUT_BASE: ${{ inputs.base-ref }}
+        PR_BASE: ${{ github.base_ref }}
+      run: |
+        base="${INPUT_BASE:-$PR_BASE}"
+        if [ -z "$base" ]; then
+          echo "::error::No base branch. Run on pull_request events or set base-ref."
+          exit 1
+        fi
+        if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+          git fetch --no-tags --quiet --unshallow origin || true
+        fi
+        git fetch --no-tags --quiet origin "+refs/heads/${base}:refs/remotes/origin/${base}"
+        echo "ref=origin/${base}" >> "$GITHUB_OUTPUT"
+
+    - name: Install codebase-memory-mcp
+      id: engine
+      shell: bash
+      env:
+        VERSION: ${{ inputs.engine-version }}
+      run: |
+        case "$RUNNER_ARCH" in
+          X64)   arch=amd64 ;;
+          ARM64) arch=arm64 ;;
+          *) echo "::error::Unsupported runner architecture $RUNNER_ARCH"; exit 1 ;;
+        esac
+        asset="codebase-memory-mcp-linux-${arch}-portable.tar.gz"
+        url="https://github.com/DeusData/codebase-memory-mcp/releases/download/${VERSION}"
+        dir="$RUNNER_TEMP/pergamon-engine"
+        mkdir -p "$dir" && cd "$dir"
+        curl -fsSL --retry 3 -o "$asset" "$url/$asset"
+        curl -fsSL --retry 3 -o checksums.txt "$url/checksums.txt"
+        grep " ${asset}\$" checksums.txt | sha256sum -c -
+        tar xzf "$asset"
+        echo "binary=$dir/codebase-memory-mcp" >> "$GITHUB_OUTPUT"
+
+    - name: Review impact
+      id: review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PERGAMON_PR_NUMBER: ${{ github.event.pull_request.number }}
+        PERGAMON_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        BINARY: ${{ steps.engine.outputs.binary }}
+        BASE_REF: ${{ steps.base.outputs.ref }}
+        DEPTH: ${{ inputs.depth }}
+        MODE: ${{ inputs.mode }}
+        COMMENT: ${{ inputs.comment }}
+        MAX_ROWS: ${{ inputs.max-rows }}
+        MEDIUM: ${{ inputs.medium-threshold }}
+        HIGH: ${{ inputs.high-threshold }}
+        VERSION: ${{ inputs.engine-version }}
+      run: |
+        python3 "$GITHUB_ACTION_PATH/scripts/pergamon_review.py" \
+          --binary "$BINARY" --repo-path "$GITHUB_WORKSPACE" --base "$BASE_REF" \
+          --depth "$DEPTH" --mode "$MODE" --comment "$COMMENT" --max-rows "$MAX_ROWS" \
+          --medium-threshold "$MEDIUM" --high-threshold "$HIGH" --engine-version "$VERSION" \
+          --output "$RUNNER_TEMP/pergamon-review.md"
+        "$BINARY" daemon stop >/dev/null 2>&1 || true

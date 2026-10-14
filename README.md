@@ -1,0 +1,108 @@
+# Pergamon
+
+**See what a pull request really touches before you merge it.**
+
+Pergamon is a GitHub Action that comments on every pull request with the code that depends on what changed: other files, HTTP routes and tests. It builds a code knowledge graph on your own runner with [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp), so no code leaves the runner and no API key is needed.
+
+```yaml
+# .github/workflows/pergamon.yml
+name: Pergamon
+on: pull_request
+permissions:
+  contents: read
+  pull-requests: write
+jobs:
+  impact:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: chrisarseno/pergamon@v0
+```
+
+## What the comment looks like
+
+On a private 2,800-file Python monorepo, a one-line signature change to a shared logging helper produced:
+
+> 🔴 **High impact.** This pull request changes **1 file**. Within 2 hops of the changed code, **136 other files** depend on it, including **81 HTTP routes** and **0 test files**.
+>
+> | Method | Route | Handler | File |
+> |---|---|---|---|
+> | GET | `/health` | `health` | `src/app/api/main.py` |
+> | POST | `/api/v1/tasks` | `create_task` | `src/app/api/main.py` |
+> | … | | | |
+>
+> | Area | Dependent files |
+> |---|---|
+> | `src/app/performance/` | 32 |
+> | `src/app/workers/` | 27 |
+
+The comment is sticky: Pergamon edits the same comment on each push instead of adding a new one. The full review also appears in the job summary.
+
+Measured on a 2-vCPU machine: indexing and analysis took 47 seconds for that 2,800-file repository. Small repositories finish in a few seconds.
+
+## Why
+
+Code review shows you the diff. It doesn't show you the 136 files that import the function you changed, or the routes that run through it. Pergamon answers "what else could this break?" from a real call and import graph, not from text search or an LLM guess.
+
+## Inputs
+
+| Input | Default | Meaning |
+|---|---|---|
+| `depth` | `2` | Hops of callers, importers and users to follow from the changed code |
+| `mode` | `fast` | Indexing mode: `fast`, `moderate` or `full` (adds semantic edges; slower) |
+| `comment` | `true` | Post the sticky comment. Set `false` to only write the job summary |
+| `base-ref` | PR base | Branch to compare against |
+| `max-rows` | `25` | Rows per table or list |
+| `medium-threshold` | `10` | Dependent files for Medium impact |
+| `high-threshold` | `50` | Dependent files for High impact |
+| `engine-version` | `v0.11.0` | codebase-memory-mcp release |
+
+Impact is also rated Medium when any HTTP route is affected, and High at 10 or more routes.
+
+## Outputs
+
+`risk` (`low`/`medium`/`high`), `impacted-files`, `routes` and `tests`. Use them to gate or label pull requests:
+
+```yaml
+      - uses: chrisarseno/pergamon@v0
+        id: pergamon
+      - if: steps.pergamon.outputs.risk == 'high'
+        run: gh pr edit ${{ github.event.pull_request.number }} --add-label "high-impact"
+        env:
+          GH_TOKEN: ${{ github.token }}
+```
+
+## Limits
+
+- Static analysis. It follows calls, imports and usages in the code; it can miss dynamic dispatch, reflection, string-built imports and runtime configuration.
+- "Depends on" means the file references the changed code, not that the change breaks it.
+- Linux runners only (x64 and arm64).
+- Pull requests from forks get a read-only token, so Pergamon writes the job summary instead of commenting.
+- `actions/checkout` needs `fetch-depth: 0`, or Pergamon fetches history itself.
+
+## How it works
+
+1. Downloads a pinned codebase-memory-mcp release and verifies its SHA-256 checksum.
+2. Indexes the checked-out pull request into a local knowledge graph (158 languages via tree-sitter).
+3. Runs `detect_changes` against the merge base to find the changed code and everything that depends on it.
+4. Looks up HTTP routes defined in those files with a Cypher query.
+5. Writes one Markdown comment and the job summary.
+
+The engine is unmodified upstream codebase-memory-mcp by DeusData, MIT licensed. Pergamon is the pull-request layer on top.
+
+## Local use
+
+```bash
+python3 scripts/pergamon_review.py --binary /path/to/codebase-memory-mcp \
+  --repo-path . --base origin/main --comment false --output review.md
+```
+
+## Status
+
+v0. The comment format and inputs may change before v1. Feedback and issues welcome.
+
+## License
+
+MIT. See [LICENSE](LICENSE). codebase-memory-mcp is MIT licensed by DeusData.
