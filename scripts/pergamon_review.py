@@ -172,11 +172,12 @@ def analyse(dc: dict, routes: list[dict], area_levels: int, low: int, high: int,
     tests = sorted(f for f in impacted_files if is_test_path(f))
     product = [f for f in impacted_files if not is_test_path(f) and f not in changed]
     areas = group_areas(product, area_levels)
+    symbols = sum(1 for i in impacted if i.get("label") in ("Function", "Method", "Class"))
     level, icon = risk(len(product), len(hit_routes), low, high)
     return {
         "changed": changed, "impacted": impacted, "impacted_files": impacted_files,
         "product_files": product, "tests": tests, "routes": hit_routes,
-        "nearby_routes": nearby_routes, "areas": areas,
+        "nearby_routes": nearby_routes, "areas": areas, "symbols": symbols,
         "risk": level, "icon": icon, "total": dc.get("impacted_total", len(impacted)),
         "truncated": bool(dc.get("truncated")), "merge_base": dc.get("merge_base", ""),
     }
@@ -185,14 +186,20 @@ def analyse(dc: dict, routes: list[dict], area_levels: int, low: int, high: int,
 # ── rendering ───────────────────────────────────────────────────────────────
 
 def md_escape(s: str) -> str:
-    """Escape characters that break Markdown table cells or inline code."""
-    return str(s).replace("|", "\\|").replace("`", "\\`")
+    """Escape characters that break Markdown table cells."""
+    return str(s).replace("|", "\\|")
+
+
+def code(s: str) -> str:
+    """Inline code that survives backticks and table pipes."""
+    s = md_escape(s)
+    return f"`` {s} ``" if "`" in s else f"`{s}`"
 
 
 def file_link(path: str, server: str, repo: str, sha: str) -> str:
     if server and repo and sha:
-        return f"[`{md_escape(path)}`]({server}/{repo}/blob/{sha}/{path})"
-    return f"`{md_escape(path)}`"
+        return f"[{code(path)}]({server}/{repo}/blob/{sha}/{path})"
+    return f"{code(path)}"
 
 
 def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, sha: str,
@@ -202,6 +209,7 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
     L.append(f"{a['icon']} **{a['risk']} impact.** This pull request changes "
              f"**{len(a['changed'])} file{'s' if len(a['changed']) != 1 else ''}**. "
              f"Within {depth} hop{'s' if depth != 1 else ''} of the changed code, "
+             f"**{a.get('symbols', 0)} function{'s' if a.get('symbols', 0) != 1 else ''}** and "
              f"**{n_prod} other file{'s' if n_prod != 1 else ''}** depend on it, including "
              f"**{n_routes} HTTP route{'s' if n_routes != 1 else ''}** and "
              f"**{n_tests} test file{'s' if n_tests != 1 else ''}**.")
@@ -214,8 +222,8 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
         L += [f"### HTTP routes that may be affected ({n_routes})", "",
               "| Method | Route | Handler | File |", "|---|---|---|---|"]
         for r in a["routes"][:max_rows]:
-            L.append(f"| {route_method(r.get('qn', ''))} | `{md_escape(r.get('path', ''))}` | "
-                     f"`{md_escape(r.get('handler', ''))}` | {file_link(r.get('file', ''), server, repo, sha)} |")
+            L.append(f"| {route_method(r.get('qn', ''))} | {code(r.get('path', ''))} | "
+                     f"{code(r.get('handler', ''))} | {file_link(r.get('file', ''), server, repo, sha)} |")
         if n_routes > max_rows:
             L.append(f"\n…and {n_routes - max_rows} more.")
         L.append("")
@@ -226,8 +234,8 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
               "the file depends on the change, but the handler wasn't traced to it</summary>", "",
               "| Method | Route | Handler | File |", "|---|---|---|---|"]
         for r in nearby[:max_rows]:
-            L.append(f"| {route_method(r.get('qn', ''))} | `{md_escape(r.get('path', ''))}` | "
-                     f"`{md_escape(r.get('handler', ''))}` | {file_link(r.get('file', ''), server, repo, sha)} |")
+            L.append(f"| {route_method(r.get('qn', ''))} | {code(r.get('path', ''))} | "
+                     f"{code(r.get('handler', ''))} | {file_link(r.get('file', ''), server, repo, sha)} |")
         if len(nearby) > max_rows:
             L.append(f"\n…and {len(nearby) - max_rows} more.")
         L += ["", "</details>", ""]
@@ -235,7 +243,7 @@ def render(a: dict, *, depth: int, engine_version: str, server: str, repo: str, 
     if a["areas"]:
         L += ["### Most affected areas", "", "| Area | Dependent files |", "|---|---|"]
         for area, count in a["areas"].most_common(10):
-            L.append(f"| `{md_escape(area)}` | {count} |")
+            L.append(f"| {code(area)} | {count} |")
         L.append("")
 
     if a["tests"]:

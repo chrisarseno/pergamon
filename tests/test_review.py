@@ -105,7 +105,7 @@ class TestRender(unittest.TestCase):
         md = self.render(a)
         self.assertTrue(md.startswith(pr.MARKER))
         self.assertIn("https://github.com/o/r/blob/abc/b/y.py", md)
-        self.assertIn("**1 other file** depend", md)
+        self.assertIn("**1 other file** depend", md.replace("**0 functions** and ", ""))
 
     def test_row_limit_and_pipe_escaping(self):
         routes = [{"path": f"/r{i}|x", "qn": "__route__GET__/r", "handler": "h", "file": "a/x.py"}
@@ -114,8 +114,13 @@ class TestRender(unittest.TestCase):
         self.assertIn("…and 3 more.", md)
         self.assertIn("/r0\\|x", md)
 
-    def test_backticks_escaped(self):
-        self.assertEqual(pr.md_escape("a`b|c"), "a\\`b\\|c")
+    def test_code_spans_survive_backticks_and_pipes(self):
+        self.assertEqual(pr.code("a|b"), "`a\\|b`")
+        self.assertEqual(pr.code("a`b"), "`` a`b ``")
+
+    def test_symbol_count_in_summary(self):
+        a = pr.analyse(dc(["a/x.py"], [], functions=[("p.a.x.f", "a/x.py"), ("p.a.x.g", "a/x.py")]), [], 2, 10, 50)
+        self.assertIn("**2 functions** and **0 other files** depend", self.render(a))
 
     def test_no_changes_message(self):
         md = self.render(pr.analyse(dc([], []), [], 2, 10, 50))
