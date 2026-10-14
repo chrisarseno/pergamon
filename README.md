@@ -23,7 +23,7 @@ jobs:
 
 ## What the comment looks like
 
-From the [demo repository](https://github.com/chrisarseno/pergamon-demo/pulls), a pull request that adds a timeout to the shared `query()` database helper:
+On a small demo shop API, a pull request that adds a timeout to the shared `query()` database helper:
 
 > 🟡 **Medium impact.** This pull request changes **1 file**. Within 2 hops of the changed code, **4 other files** depend on it, including **5 HTTP routes** and **2 test files**.
 >
